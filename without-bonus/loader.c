@@ -39,7 +39,7 @@ unsigned int    p_align;// ignore this for assignment
 */
 
 int fd;
-
+void* entry_pt_addr;
 /*
  * release memory and other cleanups
  */
@@ -118,11 +118,26 @@ void load_and_run_elf(char** elf_file) {
 
       printf("Segment loaded at address %p\n", virtual_mem);
 
-      free(virtual_mem);
+       if (ehdr->e_entry >= phdr->p_vaddr && ehdr->e_entry < phdr->p_vaddr + phdr->p_memsz) {
+          size_t offset_inside_segment = ehdr->e_entry - phdr->p_vaddr;
+          entry_pt_addr = (char*) virtual_mem + offset_inside_segment;
+          printf("Entry point located at address %p\n", entry_pt_addr);
+       }
+
+      // free(virtual_mem);
     }
     
     free(phdr);
   }
+
+  if (entry_pt_addr != NULL) {
+        // Typecast the entry_point_address to a function pointer and call it
+        int (*entry_func)() = (int (*)())entry_pt_addr;
+        int result = entry_func();
+        printf("User _start return value = %d\n", result);
+    } else {
+        printf("Error: Entry point not found in any segment\n");
+    }
 
   // fd = open(exe, O_RDONLY);
 
