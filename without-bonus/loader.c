@@ -1,7 +1,17 @@
 #include "loader.h"
 
+#define MAX_SEGMENTS 100
+
 Elf32_Ehdr *ehdr; // pointer to ELF header struct
 Elf32_Phdr *phdr; // pointer to Programm header struct
+int seg_ptr = 0;
+
+typedef struct{
+  void* address;
+  size_t space;
+} SegmentMap;
+
+SegmentMap segments_for_cleanup[MAX_SEGMENTS];
 
 /*
 u->unsigned
@@ -44,7 +54,19 @@ void* entry_pt_addr;
  * release memory and other cleanups
  */
 void loader_cleanup() {
-  
+  // free(phdr);
+  free(ehdr);
+  for(int i = 0;i<MAX_SEGMENTS;i++){
+    if(segments_for_cleanup[i].address!=NULL){
+      if(munmap(segments_for_cleanup[i].address, segments_for_cleanup[i].space)==-1){
+        printf("Munmap for freeing segment memory failed");
+      }else {
+            printf("Successfully unmapped segment at %p\n", segments_for_cleanup[i].address);
+        }
+    }else{
+      break;
+    }
+  }
 }
 
 /*
@@ -52,7 +74,7 @@ void loader_cleanup() {
 */
 
 void load_and_run_elf(char** elf_file) {
-  printf("INSIDE LOAD_AND_RUN_ELF FUNC [for debugging]\n");
+  // printf("INSIDE LOAD_AND_RUN_ELF FUNC [for debugging]\n");
 
   // 1. Load entire binary content into the memory from the ELF file.
   // 2. Iterate through the PHDR table and find the section of PT_LOAD 
@@ -96,9 +118,9 @@ void load_and_run_elf(char** elf_file) {
     // now loading PT_LOAD
 
     if(phdr->p_type==PT_LOAD){
-      void* virtual_mem = mmap(NULL,phdr->p_memsz,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_ANONYMOUS|MAP_PRIVATE,0,0);
+      void* VIRTUAL_MEMORY = mmap(NULL,phdr->p_memsz,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_ANONYMOUS|MAP_PRIVATE,0,0);
 
-      if(virtual_mem==MAP_FAILED){
+      if(VIRTUAL_MEMORY==MAP_FAILED){
         printf("Error Mapping memory\n");
         exit(1);
       }
@@ -106,27 +128,33 @@ void load_and_run_elf(char** elf_file) {
       lseek(fd,phdr->p_offset,SEEK_SET);
 
       // Reading data
-      if (read(fd, virtual_mem, phdr->p_filesz) != phdr->p_filesz) {
+      if (read(fd, VIRTUAL_MEMORY, phdr->p_filesz) != phdr->p_filesz) {
         printf("Error reading segment data\n");
         exit(1);
       }
 
       // Zero out the rest of the memory if the segment is larger than the file size
       if (phdr->p_filesz < phdr->p_memsz) {
-        memset((char*)virtual_mem + phdr->p_filesz, 0, phdr->p_memsz - phdr->p_filesz);
+        memset((char*)VIRTUAL_MEMORY + phdr->p_filesz, 0, phdr->p_memsz - phdr->p_filesz);
       }
 
-      printf("Segment loaded at address %p\n", virtual_mem);
+      printf("PT_LOAD Segment loaded at address %p\n", VIRTUAL_MEMORY);
 
        if (ehdr->e_entry >= phdr->p_vaddr && ehdr->e_entry < phdr->p_vaddr + phdr->p_memsz) {
           size_t offset_inside_segment = ehdr->e_entry - phdr->p_vaddr;
-          entry_pt_addr = (char*) virtual_mem + offset_inside_segment;
+          entry_pt_addr = (char*) VIRTUAL_MEMORY + offset_inside_segment;
           printf("Entry point located at address %p\n", entry_pt_addr);
        }
 
-      // free(virtual_mem);
+      // free(VIRTUAL_MEMORY);
+      // munmap(VIRTUAL_MEMORY,phdr->p_memsz);
+
+      segments_for_cleanup[seg_ptr].address = VIRTUAL_MEMORY;
+      segments_for_cleanup[seg_ptr].space = phdr->p_memsz;
+      seg_ptr++;
     }
     
+    // not unloading this in loader_cleanup as pointer referencing a new address for every programm header
     free(phdr);
   }
 
@@ -134,7 +162,9 @@ void load_and_run_elf(char** elf_file) {
         // Typecast the entry_point_address to a function pointer and call it
         int (*entry_func)() = (int (*)())entry_pt_addr;
         int result = entry_func();
+        printf("--------------------------------------------\n");
         printf("User _start return value = %d\n", result);
+        printf("--------------------------------------------\n");
     } else {
         printf("Error: Entry point not found in any segment\n");
     }
@@ -199,18 +229,18 @@ int main(int argc, char** argv)
   // 2. passing it to the loader for carrying out the loading/execution
   // Now if we come so far, we are sure that we have an ELF!
 
-  printf("YIPEE! [File is valid and ELF header is loaded ] (for debugging purposes)\n");
+  // printf("YIPEE! [File is valid and ELF header is loaded ] (for debugging purposes)\n");
   load_and_run_elf(argv);
   
   // 3. invoke the cleanup routine inside the loader  
-  //loader_cleanup();
+  loader_cleanup();
 
   if (close(fd) < 0) {
 	printf("Error closing file\n");
 	exit(1);
   }
 
-  free(ehdr);
+  // free(ehdr);
 
   return 0;
 }
